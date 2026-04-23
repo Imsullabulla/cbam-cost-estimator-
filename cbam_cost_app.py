@@ -8,8 +8,19 @@ import re
 # 1. CONFIGURATION
 # ==========================================
 CBAM_PHASE_IN_REDUCTION = {
-    2026: 0.025, 2027: 0.05, 2028: 0.10, 2029: 0.225, 
+    2026: 0.025, 2027: 0.05, 2028: 0.10, 2029: 0.225,
     2030: 0.485, 2031: 0.61, 2032: 0.735, 2033: 0.86, 2034: 1.00
+}
+
+# Official CBAM certificate prices per quarter (2026)
+# Published by the Commission the first calendar week after each quarter ends.
+# Each price applies to CBAM certificates for goods imported during that quarter.
+# Source: Article 20 of Regulation (EU) 2023/956
+CBAM_QUARTERLY_PRICES_2026 = {
+    "Q1 (Jan–Mar)": {"price": 75.36, "published": "7 April 2026"},
+    "Q2 (Apr–Jun)": {"price": None,  "published": "6 July 2026"},
+    "Q3 (Jul–Sep)": {"price": None,  "published": "5 October 2026"},
+    "Q4 (Oct–Dec)": {"price": None,  "published": "4 January 2027"},
 }
 
 # Standard defaults for yield (Consumption Factor)
@@ -216,12 +227,32 @@ def calculate_liability_logic(year, cn, qty, see, price, route_tag, db_bench, yi
 st.set_page_config(page_title="CBAM Cost Estimator", page_icon="💶", layout="wide")
 st.markdown("""
 <style>
-    .stApp {background-color: #fafbfc;}
-    .block-container {padding-top: 2rem;}
-    div[data-testid="stMetric"] {background: white; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1);}
-    .product-badge {background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 12px 20px; border-radius: 8px; margin: 10px 0;}
-    .result-card {background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); padding: 25px; border-radius: 12px; color: white; text-align: center;}
-    .info-card {background: white; padding: 15px; border-radius: 8px; border-left: 4px solid #667eea; margin: 10px 0;}
+    .product-badge {
+        background: linear-gradient(135deg, #1a3d2b 0%, #1d7145 60%, #2ecc71 100%);
+        color: #ffffff;
+        padding: 14px 18px;
+        border-radius: 12px;
+        margin: 8px 0 4px 0;
+        box-shadow: 0 4px 12px rgba(29,113,69,0.22);
+    }
+    .product-badge b { color: #a8edbc; font-size: 16px; letter-spacing: 1px; }
+    .product-badge small { color: rgba(255,255,255,0.82); font-size: 13px; }
+
+    .result-card {
+        background: linear-gradient(145deg, #1a3d2b 0%, #1d7145 55%, #2ecc71 100%);
+        border-radius: 20px;
+        padding: 32px 28px;
+        text-align: center;
+        box-shadow: 0 8px 28px rgba(29,113,69,0.30), 0 2px 8px rgba(0,0,0,0.12);
+    }
+
+    .info-card {
+        background: #ffffff;
+        padding: 14px 18px;
+        border-radius: 12px;
+        border-left: 4px solid #34c759;
+        margin: 8px 0;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -246,9 +277,48 @@ st.title("CBAM Financial Estimator")
 # Sidebar - cleaner
 with st.sidebar:
     st.markdown("### Settings")
-    ets_price = st.number_input("ETS Price (€/tCO2)", value=85.0, step=5.0, format="%.2f")
-    st.caption("[View live EU ETS price](https://tradingeconomics.com/commodity/carbon)")
     reporting_year = st.selectbox("Year", [2026, 2027, 2028, 2029, 2030, 2031, 2032, 2033, 2034])
+
+    if reporting_year == 2026:
+        st.markdown("**Quarter of import**")
+        quarter_label = st.selectbox(
+            "Quarter",
+            list(CBAM_QUARTERLY_PRICES_2026.keys()),
+            label_visibility="collapsed"
+        )
+        q_data = CBAM_QUARTERLY_PRICES_2026[quarter_label]
+        q_price = q_data["price"]
+
+        if q_price is not None:
+            st.success(f"Official price: **€{q_price:.2f}/tCO2**")
+            ets_price = st.number_input(
+                "CBAM Certificate Price (€/tCO2)",
+                value=q_price, step=1.0, format="%.2f"
+            )
+        else:
+            st.warning(f"Price not yet published (expected {q_data['published']})")
+            ets_price = st.number_input(
+                "CBAM Certificate Price (€/tCO2)",
+                value=85.0, step=1.0, format="%.2f"
+            )
+
+        with st.expander("About quarterly prices"):
+            st.markdown(
+                "The CBAM certificate price is calculated by the Commission during the "
+                "first calendar week after each quarter ends, based on EU ETS auction data. "
+                "Each price applies to certificates for goods **imported during that quarter**.\n\n"
+                "| Quarter | Publication date | Price (€) |\n"
+                "|---------|-----------------|----------:|\n"
+                + "\n".join(
+                    f"| {q} | {d['published']} | {'€{:.2f}'.format(d['price']) if d['price'] else '—'} |"
+                    for q, d in CBAM_QUARTERLY_PRICES_2026.items()
+                )
+                + "\n\n*Source: Article 20, Regulation (EU) 2023/956*"
+            )
+    else:
+        ets_price = st.number_input("ETS Price (€/tCO2)", value=85.0, step=5.0, format="%.2f")
+        st.caption("[View live EU ETS price](https://tradingeconomics.com/commodity/carbon)")
+
     st.markdown("---")
     st.caption(f"Phase-in rate: {CBAM_PHASE_IN_REDUCTION.get(reporting_year, 1.0)*100:.1f}%")
 
@@ -271,7 +341,7 @@ with col_left:
 
     # Show selected product clearly
     if product_name:
-        st.markdown(f'<div class="product-badge"><b>{cn_code}</b><br><small>{product_name}</small></div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="product-badge"><b style="font-size:15px;letter-spacing:-0.25px;">{cn_code}</b><br><small style="color:#b0b4ba;font-size:13px;">{product_name}</small></div>', unsafe_allow_html=True)
 
     # === IMPORT DETAILS ===
     st.markdown("### Import Details")
@@ -371,9 +441,9 @@ with col_right:
         # Main result card
         st.markdown(f"""
         <div class="result-card">
-            <div style="font-size: 14px; opacity: 0.9;">ESTIMATED CBAM COST</div>
-            <div style="font-size: 48px; font-weight: bold; margin: 10px 0;">€{cost:,.0f}</div>
-            <div style="font-size: 16px;">€{cost/quantity:.2f} per tonne</div>
+            <div style="font-size:11px;font-weight:600;color:rgba(255,255,255,0.65);letter-spacing:1px;text-transform:uppercase;">Estimated CBAM Cost</div>
+            <div style="font-size:54px;font-weight:800;color:#ffffff;letter-spacing:-2.5px;line-height:1.05;margin:10px 0;text-shadow:0 2px 12px rgba(0,0,0,0.18);">€{cost:,.0f}</div>
+            <div style="font-size:14px;color:rgba(255,255,255,0.72);font-weight:500;letter-spacing:0.1px;">€{cost/quantity:.2f} per tonne</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -437,8 +507,8 @@ with col_right:
             x=years, y=costs,
             mode='lines+markers',
             name='Estimated Cost',
-            line=dict(color='#11998e', width=3),
-            marker=dict(size=8),
+            line=dict(color='#1d7145', width=3),
+            marker=dict(size=7, color='#34c759', line=dict(color='#1d7145', width=2)),
             hovertemplate='<b>%{x}</b><br>Cost: €%{y:,.0f}<extra></extra>'
         ))
 
@@ -448,19 +518,22 @@ with col_right:
             x=[reporting_year], y=[costs[current_idx]],
             mode='markers',
             name=f'Selected Year ({reporting_year})',
-            marker=dict(color='#667eea', size=14, symbol='star'),
+            marker=dict(color='#ff9f0a', size=14, symbol='star'),
             hovertemplate=f'<b>{reporting_year}</b><br>Cost: €{costs[current_idx]:,.0f}<extra></extra>'
         ))
 
         fig.update_layout(
             xaxis_title='Year',
             yaxis_title='Estimated Cost (€)',
-            xaxis=dict(tickmode='linear', tick0=2026, dtick=1),
-            yaxis=dict(tickformat=',.0f', tickprefix='€'),
+            xaxis=dict(tickmode='linear', tick0=2026, dtick=1, gridcolor='rgba(0,0,0,0.05)', color='#6e6e73'),
+            yaxis=dict(tickformat=',.0f', tickprefix='€', gridcolor='rgba(0,0,0,0.05)', color='#6e6e73'),
             hovermode='x unified',
-            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1),
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, font=dict(color='#3a3a3c')),
             margin=dict(l=20, r=20, t=40, b=20),
-            height=350
+            height=320,
+            font=dict(family='-apple-system, Inter, sans-serif', color='#3a3a3c'),
         )
 
         st.plotly_chart(fig, use_container_width=True)
